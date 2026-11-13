@@ -8,7 +8,7 @@
 </h3>
 
 <p align="center">
-  <img alt="endpoints" src="https://img.shields.io/badge/endpoints-302-2ea44f?style=for-the-badge">
+  <img alt="endpoints" src="https://img.shields.io/badge/endpoints-309-2ea44f?style=for-the-badge">
   <img alt="services" src="https://img.shields.io/badge/services-31-f0883e?style=for-the-badge">
   <img alt="gateway" src="https://img.shields.io/badge/gateway-%2Fapisite-316dca?style=for-the-badge">
   <img alt="auth" src="https://img.shields.io/badge/auth-cookie%20%2B%20csrf-d1242f?style=for-the-badge">
@@ -34,6 +34,8 @@
 - [API reference](#-api-reference)
   - [users](#users) · [accountinformation](#accountinformation) · [accountsettings](#accountsettings) · [auth](#auth) · [avatar](#avatar) · [catalog](#catalog) · [thumbnails](#thumbnails) · [games](#games) · [groups](#groups) · [friends](#friends) · [inventory](#inventory) · [develop](#develop) · [itemconfiguration](#itemconfiguration) · [economy](#economy) · [trades](#trades) · [forums](#forums) · [badges](#badges) · [chat](#chat) · [privatemessages](#privatemessages) · [presence](#presence) · [premiumfeatures](#premiumfeatures) · [ads](#ads) · [billing](#billing) · [privateservers](#privateservers) · [support](#support) · [api](#api-alerts) · [locale](#locale) · [donate](#donate) · [safechat](#safechat) · [paidaccess](#paidaccess) · [rbxcdn](#rbxcdn)
 - [Legacy web endpoints](#-legacy-web-endpoints)
+- [Static & misc](#-static--misc)
+- [Realtime hubs (SignalR)](#-realtime-hubs-signalr)
 - [Game launch protocol](#-game-launch-protocol)
 - [Client downloads](#-client-downloads)
 - [Quick examples](#-quick-examples)
@@ -130,6 +132,7 @@ tells you exactly what's missing. Decode it here:
 | `405` | Right path, wrong verb | Compare with the **Method** column |
 | `429` or error codes like `FloodedGlobally` / `FloodedPerAsset` | Rate-limited (comments, DMs, forum posts) | Back off. Codes the client actually handles: `VerifyEmail`, `RequiresCaptcha`, `UserTooNew`, `FloodedGlobally`, `FloodedPerAsset`, `Moderated` |
 | `500` — `Not logged in` | 🛡️ **Staff** routes answer `500` instead of `401` for outsiders | Stop. That response *is* the answer |
+| `401` with **`application/problem+json`** body (`{"type":"https://tools.ietf.org/html/rfc9110...","title":"Unauthorized","traceId":...}`) | You're talking to the **auth subsystem** (`/auth/*`) — it speaks ASP.NET RFC-9110, *not* the gateway's `errors[]` envelope | Same fix as the `401` row (log in), but parse the error differently |
 
 > [!IMPORTANT]
 > The fastest way to tell **what kind of auth you're dealing with**: fire the request
@@ -236,6 +239,7 @@ tells you exactly what's missing. Decode it here:
 | 8 | `POST` | `/apisite/accountsettings/v1/users/{id}/block` | Block user | 🔐 Session |
 | 9 | `POST` | `/apisite/accountsettings/v1/users/{id}/unblock` | Unblock user | 🔐 Session |
 | 10 | `GET` | `/apisite/accountsettings/v1/users/{id}/is-blocked` | `{isBlocked}` | 🔐 Session |
+| 11 | `GET` | `/apisite/accountsettings/v1/email` | `{emailAddress, verified}` — powers the "verified" badge on the Billing tab | 🔐 Session |
 
 ### auth
 
@@ -251,6 +255,12 @@ tells you exactly what's missing. Decode it here:
 | 8 | `POST` | `/apisite/auth/v2/accounts/switch` | `{userId}` | 🔐 Session |
 | 9 | `POST` | `/apisite/auth/v2/accounts/remove` | `{userId}` | 🔐 Session |
 | 10 | `GET` / `POST` | `/apisite/auth/v2/ban` (+ `/ban/unlock`) | Ban status / acknowledge `{understood}` | 🔐 Session |
+| 11 | `GET` | `/auth/discord/status` | Is a Discord account linked to the session — **note:** lives outside `/apisite` and answers with a *different* error envelope (ASP.NET `problem+json`, see [When a call fails](#-when-a-call-fails)) | 🔐 Session |
+
+> [!NOTE]
+> **Discord OAuth flows** (browser redirects, not JSON APIs): `GET /auth/discord/start`
+> (account signup verification) and `GET /auth/discord/login` (log in with Discord).
+> One Discord account can verify only one Fluxer account.
 
 ### avatar
 
@@ -283,6 +293,7 @@ tells you exactly what's missing. Decode it here:
 | 4 | `GET` | `/apisite/catalog/v1/favorites/users/{id}/assets/{id}/favorite` | Is favorited | 🔐 Session |
 | 5 | `POST` | `/apisite/catalog/v1/favorites/users/{id}/assets/{id}/favorite` | Favorite | 🔐 Session |
 | 6 | `DELETE` | `/apisite/catalog/v1/favorites/users/{id}/assets/{id}/favorite` | Unfavorite | 🔐 Session |
+| 7 | `GET` | `/apisite/catalog/v1/assets/{id}/animation-preview` | Animation keyframes for the catalog 3D viewer (pairs with static `/animation-preview/rig.json`) | 🔓 Public |
 
 ### thumbnails
 
@@ -418,6 +429,7 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 | 22 | `POST` | `/apisite/develop/v1/assets/upload-gameicon?placeId=` | Multipart icon upload | 🔐 Session |
 | 23 | `POST` | `/apisite/develop/v1/assets/upload-thumbnail?universeId=` | Multipart thumbnail upload | 🔐 Session |
 | 24 | `GET` | `/apisite/develop/v1/assets/genres` | Genre list | 🔓 Public |
+| 25 | `GET` | `/apisite/develop/v1/places/{id}/download` | Place-file download (used as a link, not an axios call) | 🔐 Session |
 
 ### itemconfiguration
 
@@ -649,6 +661,40 @@ directly — no `/apisite` prefix.
 
 ---
 
+## 🗂 Static & misc
+
+| # | Method | Endpoint | Description | Auth |
+|:-:|---|---|---|:-:|
+| 1 | `GET` | `/animation-preview/rig.json` | R15 rig skeleton (bone map) for the catalog 3D animation viewer | 🔓 Public |
+| 2 | `GET` | `/api/proxy?url=` | Request proxy — **dormant**, only active if the `proxyEnabled` backend flag flips | — |
+| 3 | `GET` | `/js/theme-init.js` · `/theme2020/download` | Theme bootstrap script + legacy CSS theme route | 🔓 Public |
+
+---
+
+## 📡 Realtime hubs (SignalR)
+
+The `_app` bundle ships the full **@microsoft/signalr** client. Two hubs are wired up:
+
+| Hub | URL | State | Details |
+|---|---|---|---|
+| **live** | `POST /live/negotiate?negotiateVersion=1` → WebSocket / SSE / long-poll at `/live` | 🟢 **live** — verified: the handshake returns `connectionId` + `availableTransports` even unauthenticated | pushes events to the session's user |
+| **chat** | `POST /chat/negotiate` | ⚰️ **dead** — client code exists, negotiate answers `404`; site chat now polls the REST endpoints | documented in case it returns |
+
+> [!IMPORTANT]
+> **`/live` events** the client subscribes to:
+> `FriendRequest` · `FriendAccepted` · `FriendRequestsChanged` · `RobuxChanged` (`{robux}`).
+> Reconnect ladder: `[0, 2s, 5s, 10s, 30s]`.
+>
+> **`/chat` events** (per bundle): `ChatTyping` (`{conversationId,userId,endsAt}`) ·
+> `ChatConversationAdded` · `ChatMessageReceived` (`{conversationId,id,message,sent,userId}`) ·
+> client→server invocation: **`ListenForMessages`** on a ping timer.
+
+Negotiate is the only HTTP endpoint — after that, traffic moves to
+`wss://www.fluxr.lol/live` (or the SSE / long-poll fallback). Cookies ride along
+automatically in a browser; with a raw client, pass them yourself.
+
+---
+
 ## 🎮 Game launch protocol
 
 ```text
@@ -718,6 +764,8 @@ curl -b cookies.txt -H "x-csrf-token: <token>" \
 > visible in the public bundles — **do not probe or automate them**.
 
 > [!WARNING]
+> - The `/live` SignalR hub negotiates **even without a session** — events just won't
+>   reference your user. The `/chat` hub is referenced by the client but 404s server-side: dead code.
 > - The whole platform is **one Next.js build ID away from breaking** — paths can shift
 >   without notice on any deploy.
 > - Commenting, uploading and ads are rate-limited and captcha-gated server-side.
@@ -730,9 +778,11 @@ curl -b cookies.txt -H "x-csrf-token: <token>" \
 
 | Bucket | Count |
 |---|:-:|
-| Gateway endpoints (`/apisite/*`, 31 services) | 274 |
+| Gateway endpoints (`/apisite/*`, 31 services) | 278 |
 | Legacy web routes | 28 |
-| **Total documented calls** | **302** |
+| Static & misc routes | 3 |
+| Realtime hubs (SignalR) | 2 |
+| **Total documented calls** | **309** |
 
 Extracted from build `OQlDqchIHbJOf0zyI7o0L` · verified 2026-11-13.
 </details>
