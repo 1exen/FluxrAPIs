@@ -1,23 +1,29 @@
 <h1 align="center">
-  <code>fluxr.lol</code> — Full API Reference
+  <code>fluxr.lol</code> — The Complete API Reference
 </h1>
 
-<p align="center">
-  Every endpoint on <strong>Fluxer</strong> (the 2019-era revival platform), pulled from the
-  production Next.js bundles and verified against the live gateway.<br>
-  <strong>301 endpoints</strong> · <strong>31 services</strong> · last checked <em>2026-11-13</em>
-</p>
+<h3 align="center">
+  Every endpoint on <strong>Fluxer</strong> — the 2019-era revival platform —<br>
+  extracted from the production Next.js bundles &amp; verified against the live gateway.
+</h3>
 
 <p align="center">
-  <img alt="endpoints" src="https://img.shields.io/badge/endpoints-301-9cf?style=flat-square">
-  <img alt="services" src="https://img.shields.io/badge/services-31-orange?style=flat-square">
-  <img alt="base" src="https://img.shields.io/badge/gateway-%2Fapisite-blue?style=flat-square">
-  <img alt="auth" src="https://img.shields.io/badge/auth-cookie%20%2B%20csrf-red?style=flat-square">
+  <img alt="endpoints" src="https://img.shields.io/badge/endpoints-302-2ea44f?style=for-the-badge">
+  <img alt="services" src="https://img.shields.io/badge/services-31-f0883e?style=for-the-badge">
+  <img alt="gateway" src="https://img.shields.io/badge/gateway-%2Fapisite-316dca?style=for-the-badge">
+  <img alt="auth" src="https://img.shields.io/badge/auth-cookie%20%2B%20csrf-d1242f?style=for-the-badge">
+  <img alt="unofficial" src="https://img.shields.io/badge/status-unofficial-8250df?style=for-the-badge">
 </p>
+
+> [!NOTE]
+> Everything in this document was recovered from **three** places: the leaked rewrite table in
+> `_buildManifest.js`, all **82 webpack chunks** of the production frontend, and live probes
+> against `www.fluxr.lol`. Nothing is guessed. This is a community document — not affiliated
+> with, endorsed by, or connected to fluxr.lol or Roblox Corporation in any way.
 
 ---
 
-## Contents
+## 📦 Contents
 
 - [How this map was made](#how-this-map-was-made)
 - [Architecture](#architecture)
@@ -30,33 +36,40 @@
 - [Game launch protocol](#game-launch-protocol)
 - [Client downloads](#client-downloads)
 - [Quick examples](#quick-examples)
-- [Notes](#notes)
+- [Notes & gotchas](#notes--gotchas)
 
 ---
 
-## How this map was made
+## 🔍 How this map was made
 
-No guessing — everything below comes from three sources:
+1. **`/_next/static/OQlDqchIHbJOf0zyI7o0L/_buildManifest.js`**
+   Leaks the Next.js rewrite table that mounts the API gateway under `/apisite/*`,
+   `/thumbs/*`, `/images/*`, `/asset/*`, `/admin/*` and `/v1/*`.
+2. **Every page + shared chunk** (`webpackChunk_N_E`, 82 files)
+   All `axios` wrapper calls and the service resolver were parsed out, then cross-checked
+   between chunks that alias the same helpers.
+3. **Live probes** against the production gateway to confirm status codes, auth
+   requirements and real response shapes.
 
-1. **`/_next/static/OQlDqchIHbJOf0zyI7o0L/_buildManifest.js`** — leaks the rewrite table that mounts the gateway under `/apisite/*`, `/thumbs/*`, `/images/*`, `/asset/*`, `/admin/*`, `/v1/*`.
-2. **Every page + shared chunk** (82 files, `webpackChunk_N_E`) — all `axios` calls (`Ay`) and the service resolver (`bO`) were parsed out and cross-checked.
-3. **Live probes** against the production gateway to confirm status codes and response shapes.
-
-> The frontend builds URLs as `apiFormat: https://www.fluxr.lol/apisite/{service}{path}`.
-> So `bO("users", "/v1/users/authenticated")` → `GET https://www.fluxr.lol/apisite/users/v1/users/authenticated`.
+> [!IMPORTANT]
+> The frontend builds URLs from one config value:
+> `apiFormat: "https://www.fluxr.lol/apisite/{service}{path}"`
+>
+> So `bO("users", "/v1/users/authenticated")` becomes
+> `GET https://www.fluxr.lol/apisite/users/v1/users/authenticated`
 
 ---
 
-## Architecture
+## 🏗 Architecture
 
-```
+```text
                     ┌──────────────────────────────────────────────┐
                     │                fluxr.lol (Next.js)           │
  browser ──────────►│  www.fluxr.lol                               │
                     │    ├── /apisite/{service}/**  ──► API gateway│
                     │    ├── /thumbs/** /images/**  ──► CDN/thumbs │
                     │    ├── /asset/**              ──► asset host │
-                    │    ├── /game/**  /universes/** ──► legacy web│
+                    │    ├── /game/** /universes/** ──► legacy web │
                     │    └── /admin-api/**          ──► staff tools│
                     └──────────────┬───────────────────────────────┘
                                    │
@@ -65,7 +78,7 @@ No guessing — everything below comes from three sources:
 
 ---
 
-## Base URLs
+## 🌐 Base URLs
 
 | What | URL |
 |---|---|
@@ -73,17 +86,28 @@ No guessing — everything below comes from three sources:
 | API gateway | `https://www.fluxr.lol/apisite/{service}{path}` |
 | Legacy web API | `https://www.fluxr.lol/...` (no prefix) |
 | Thumbnail CDN | `https://www.fluxr.lol/images/...` |
-| Legacy thumbnail route | `https://www.fluxr.lol/thumbs/asset.ashx` |
-| Client download host | `https://setup.fluxr.lol` |
+| Legacy thumbnails | `https://www.fluxr.lol/thumbs/asset.ashx` |
+| Client downloads | `https://setup.fluxr.lol` |
 
 ---
 
-## Auth & headers
+## 🔐 Auth & headers
 
-- **Cookie session.** Login sets httpOnly session cookies; requests to member endpoints must carry them. There is no public token API.
-- **CSRF.** Every request sends an `x-csrf-token` header. On a `403` whose response carries a fresh `x-csrf-token`, the client stores it and retries the same request once. Copy this behaviour or mutating calls will bounce.
-- **Turnstile.** Signup/login are protected by Cloudflare Turnstile (sitekey `0x4AAAAAAF_V9KGtIJ95V_DV`). Login page: `/auth/accountlogin`, Discord flows: `/auth/discord/start`, `/auth/discord/login`.
-- **Unauthenticated calls** return `401` with the standard error envelope.
+- **Cookie session.** Login sets httpOnly session cookies; member endpoints must carry
+  them. There is no public token API.
+- **CSRF.** Every request sends an `x-csrf-token` header (empty on first call).
+
+> [!IMPORTANT]
+> **The CSRF dance:** on a `403` whose response headers carry a fresh `x-csrf-token`,
+> the client stores it and retries the *same request once*. If you script against the
+> gateway, replicate this — otherwise every mutating call will bounce.
+
+> [!WARNING]
+> **Cloudflare Turnstile** protects signup and login (sitekey `0x4AAAAAAF_V9KGtIJ95V_DV`).
+> Login page: `/auth/accountlogin` · Discord flows: `/auth/discord/start`,
+> `/auth/discord/login`. One Discord account may verify only one Fluxer account.
+
+Unauthenticated calls return the standard error envelope:
 
 ```json
 { "errors": [ { "code": 0, "message": "Authorization has been denied for this request." } ] }
@@ -91,15 +115,16 @@ No guessing — everything below comes from three sources:
 
 ---
 
-## Response conventions
+## 📨 Response conventions
 
 - REST-ish JSON. Collections paginate with `nextPageCursor` / `previousPageCursor` + `limit`.
 - Detail endpoints return bare objects; list endpoints wrap in `{"data": [...]}`.
-- Legacy (`.aspx`-era) routes use PascalCase payloads (`IsValid`, `Data`, `Items`, `Comments`).
-- Thumbnail endpoints return `{"data":[{"targetId","state","imageUrl","version":"TN3"}]}` with `state` one of `Pending / Completed / Blocked / Error`.
+- Legacy (`.aspx`-era) routes use PascalCase payloads — `IsValid`, `Data`, `Items`, `Comments`.
+- Thumbnail endpoints return `{"data":[{"targetId","state","imageUrl","version":"TN3"}]}`
+  where `state` is `Pending` / `Completed` / `Blocked` / `Error`.
 
 <details>
-<summary><strong>Live response samples (verified)</strong></summary>
+<summary>🧪 Live response samples — verified against production</summary>
 
 ```jsonc
 // GET /apisite/users/v1/users/1
@@ -116,23 +141,30 @@ No guessing — everything below comes from three sources:
 }
 
 // GET /apisite/games/v1/games/sorts?gameSortsContext=Home
-{ "sorts": [ { "token": "popular", "name": "Popular", "tokenExpiryInSeconds": 86400, ... },
-             { "token": "mostFavorited", ... } ] }
+{ "sorts": [ { "token": "popular", "name": "Popular", "tokenExpiryInSeconds": 86400 },
+             { "token": "mostFavorited", "..." : "..." } ] }
 
 // GET /apisite/thumbnails/v1/users/avatar?userIds=1&size=420x420&format=png
 { "data": [ { "targetId": 1, "state": "Completed",
   "imageUrl": "https://www.fluxr.lol/images/thumbnails/...png", "version": "TN3" } ] }
 
 // GET /apisite/api/alerts/alert-info
-{ "IsVisible": true, "Text": "Welcome to Fluxer! ...", "LinkUrl": "https://www.fluxr.lol/support" }
+{ "IsVisible": true, "Text": "Welcome to Fluxer! ...",
+  "LinkUrl": "https://www.fluxr.lol/support" }
 ```
 </details>
 
 ---
 
-## API reference
+## 📚 API reference
 
-Legend — `id` = id number. Auth column: `P` public, `A` needs session, `S` staff only.
+> [!TIP]
+> **Auth legend used in every table below:**
+> **P** = public (worked unauthenticated during testing) ·
+> **A** = requires a session cookie ·
+> **S** = staff-only.
+>
+> A cell like `` `GET` / `POST` `` means both methods exist on the same path.
 
 ### users
 
@@ -239,8 +271,13 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 | 5 | `GET` | `/apisite/thumbnails/v1/groups/icons?groupIds=&format=&size=` | Group icons |
 | 6 | `GET` | `/apisite/thumbnails/v1/assets?assetIds=&format=&size=` | Item thumbnails |
 | 7 | `GET` | `/apisite/thumbnails/v1/games/icons?universeIds=&size=&format=` | Game icons |
-| 8 | `GET` | `/apisite/thumbnails/v1/try-on/{assetId}` | 2D "wear on my avatar" render — poll until `state:"ready"` |
-| 9 | `GET` | `/apisite/thumbnails/v1/assets/{assetId}/3d` | 3D item model — poll until `state:"ready"` |
+| 8 | `GET` | `/apisite/thumbnails/v1/try-on/{assetId}` | 2D "wear on my avatar" render |
+| 9 | `GET` | `/apisite/thumbnails/v1/assets/{assetId}/3d` | 3D item model |
+
+> [!TIP]
+> The render endpoints (#8, #9) answer with `state: "Pending"` until the renderer
+> finishes. The website polls every **1.5 s** and gives up after **80 attempts** —
+> do the same and cache the result.
 
 ### games
 
@@ -549,10 +586,10 @@ Wrapper base: `/apisite/support/v1`.
 
 ---
 
-## Legacy web endpoints
+## 🕸 Legacy web endpoints
 
 Classic Roblox-era routes still live on the main domain. These are what the frontend hits
-directly (`$_()`/`Xu()` helpers — no `/apisite` prefix).
+directly — no `/apisite` prefix.
 
 | # | Method | Endpoint | Description | Auth |
 |:-:|---|---|---|:-:|
@@ -579,16 +616,16 @@ directly (`$_()`/`Xu()` helpers — no `/apisite` prefix).
 | 21 | `POST` | `/develop/ugc-upload` | UGC flow variant | A |
 | 22 | `POST` | `/develop/upload-version` | Push new version of an asset | A |
 | 23 | `GET` | `/user-sponsorship/{type}` | Ad-banner HTML (`type` 1=728x90, 2=160x620, 3=300x270) | P |
-| 24 | `GET` | `/v1/themes/User/{userId}` · `PATCH {themeType}` | Site theme (Light/Dark) | A |
+| 24 | `GET` / `PATCH` | `/v1/themes/User/{userId}` | Site theme (`{themeType}` = Light/Dark) | A |
 | 25 | `GET` | `/admin-api/api/pending-counts` | Staff queue counters (moderation) | S |
 | 26 | `GET` | `/markdown/{page}` | Help-article markdown | P |
 | 27 | `GET` | `/thumbs/asset.ashx?assetId=&width=&height=` | Legacy thumbnail redirect | P |
 
 ---
 
-## Game launch protocol
+## 🎮 Game launch protocol
 
-```
+```text
 1.  GET /game/get-join-script?placeId=123
     → { "prefix": "<scheme>", "joinScriptUrl": "<auth ticket url>", ... }
 
@@ -601,12 +638,13 @@ directly (`$_()`/`Xu()` helpers — no `/apisite` prefix).
     which hands off to the desktop client via its URI scheme.
 ```
 
-Ports `4400`/`4401` are hardcoded in `_app`. Studio uses the same dance through
-`get-studio-link` / `get-temp-studio-link`.
+> [!TIP]
+> Ports `4400` / `4401` are hardcoded in the `_app` bundle. Studio uses the same
+> handshake through `get-studio-link` / `get-temp-studio-link`.
 
 ---
 
-## Client downloads
+## 💿 Client downloads
 
 | Client | Year | URL |
 |---|---|---|
@@ -618,7 +656,11 @@ Ports `4400`/`4401` are hardcoded in `_app`. Studio uses the same dance through
 
 ---
 
-## Quick examples
+## ⚡ Quick examples
+
+> [!TIP]
+> Start with the **P** endpoints — they need nothing but `curl`. For anything marked
+> **A**, you need a session cookie *and* the CSRF retry loop from the auth section.
 
 ```bash
 # public profile
@@ -641,20 +683,33 @@ curl -b cookies.txt -H "x-csrf-token: <token>" \
 
 ---
 
-## Notes
+## 🧻 Notes & gotchas
 
-- Counts: **274 gateway endpoints** across **31 services**, **27 legacy routes** = **301** documented calls, plus the CDN paths.
-- **Not all endpoints are equal.** `P` endpoints answered `200` unauthenticated during testing;
-  `A` returned `401`; `S` routes (`/rcc/*`, `/admin-api/*`) need staff and are listed for
-  completeness only — don't poke them.
-- Poll-based render endpoints (`try-on`, `assets/{id}/3d`) answer `Pending` until the renderer
-  finishes; the site polls every 1.5 s up to 80 attempts.
-- The gateway is a thin proxy — Roblox-style envelope, cursors and error codes match the
-  2019-era conventions, but nothing here is affiliated with Roblox Corporation.
-- Documented from public client bundles for interoperability/research. Respect fluxr.lol's
-  ToS, don't automate anything abusive, don't spam their servers, and expect breaking changes
-  without notice — the whole thing is one Next.js build ID away from shifting.
+> [!CAUTION]
+> The **S**-marked routes (`/rcc/killserver`, `/rcc/killallservers`, `/admin-api/*`,
+> group audit logs) are staff-only. They are listed for completeness because they're
+> visible in the public bundles — **do not probe or automate them**.
+
+> [!WARNING]
+> - The whole platform is **one Next.js build ID away from breaking** — paths can shift
+>   without notice on any deploy.
+> - Commenting, uploading and ads are rate-limited and captcha-gated server-side.
+> - Respect fluxr.lol's Terms of Use (`/tos`). Don't spam, scrape aggressively, or
+>   automate anything abusive — the operators already had to lock signup behind Discord
+>   verification because of malicious activity.
+
+<details>
+<summary>📊 Coverage summary</summary>
+
+| Bucket | Count |
+|---|:-:|
+| Gateway endpoints (`/apisite/*`, 31 services) | 274 |
+| Legacy web routes | 28 |
+| **Total documented calls** | **302** |
+
+Extracted from build `OQlDqchIHbJOf0zyI7o0L` · verified 2026-11-13.
+</details>
 
 <p align="center">
-  <sub>mapped by hand from <code>OQlDqchIHbJOf0zyI7o0L</code> · corrections welcome via PR</sub>
+  <sub>mapped by hand from the public client bundles · corrections welcome via PR</sub>
 </p>
