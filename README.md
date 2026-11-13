@@ -123,16 +123,32 @@ Unauthenticated calls return the standard error envelope:
 Every endpoint is tagged with its auth level, so a weird response almost always
 tells you exactly what's missing. Decode it here:
 
-| Response | Why it happened | What to do |
-|---|---|---|
-| `401` — `Authorization has been denied for this request.` | Hit a 🔐 **Session** endpoint without valid cookies | `POST /apisite/auth/v2/login`, keep the session cookies, resend |
-| `403` **with** a fresh `x-csrf-token` response header | CSRF token missing or expired | Read the token out of that header, replay the **same request once** with it — this is normal, not an error |
-| `403` — captcha / Turnstile rejection | Action is bot-gated (login, signup, comments, uploads) | Only works through the real web flow; don't fight it |
-| `404` on an endpoint that should exist | Build ID changed, paths moved | Re-dump `_buildManifest.js` and re-check the service prefix |
-| `405` | Right path, wrong verb | Compare with the **Method** column |
-| `429` or error codes like `FloodedGlobally` / `FloodedPerAsset` | Rate-limited (comments, DMs, forum posts) | Back off. Codes the client actually handles: `VerifyEmail`, `RequiresCaptcha`, `UserTooNew`, `FloodedGlobally`, `FloodedPerAsset`, `Moderated` |
-| `500` — `Not logged in` | 🛡️ **Staff** routes answer `500` instead of `401` for outsiders | Stop. That response *is* the answer |
-| `401` with **`application/problem+json`** body (`{"type":"https://tools.ietf.org/html/rfc9110...","title":"Unauthorized","traceId":...}`) | You're talking to the **auth subsystem** (`/auth/*`) — it speaks ASP.NET RFC-9110, *not* the gateway's `errors[]` envelope | Same fix as the `401` row (log in), but parse the error differently |
+| Code | What it means | Fix |
+|:-:|---|---|
+| `401` | 🔐 **Session** endpoint called without valid cookies | Log in (`POST /apisite/auth/v2/login`), keep the cookies, resend |
+| `403` + fresh `x-csrf-token` header | CSRF challenge — **normal, not an error** | Replay the **same request once** with that token |
+| `403` captcha | Turnstile-gated action (login, comments, uploads) | Only works through the real web flow — don't fight it |
+| `404` on a known path | Build ID changed, endpoint moved | Re-dump `_buildManifest.js`, re-check the service prefix |
+| `405` | Right path, wrong verb | Compare the **Method** column |
+| `429` / flood errors | Rate-limited (comments, DMs, forum posts) | Back off — see error codes below |
+| `500` "Not logged in" | 🛡️ **Staff** route rejecting a non-staff caller | Stop. That response *is* the answer |
+| `401` as `problem+json` | `/auth/*` subsystem speaks ASP.NET RFC-9110, not the gateway envelope | Same fix as `401`, different body shape |
+
+<details>
+<summary>🔍 The two 401 flavors — exact wire format</summary>
+
+```jsonc
+// gateway — everything under /apisite/*
+{ "errors": [ { "code": 0, "message": "Authorization has been denied for this request." } ] }
+
+// auth subsystem — /auth/* (Discord status, etc.)
+{ "type": "https://tools.ietf.org/html/rfc9110#section-15.5.2",
+  "title": "Unauthorized", "status": 401, "traceId": "00-b691f738..." }
+```
+</details>
+
+**Rate-limit / abuse codes** the frontend actually handles (from the comment box):
+`VerifyEmail` · `RequiresCaptcha` · `UserTooNew` · `FloodedGlobally` · `FloodedPerAsset` · `Moderated`
 
 > [!IMPORTANT]
 > The fastest way to tell **what kind of auth you're dealing with**: fire the request
@@ -290,7 +306,7 @@ tells you exactly what's missing. Decode it here:
 | 1 | `POST` | `/apisite/catalog/v1/catalog/items/details` | Batch details `{items:[{itemType:"Asset",id}]}` | 🔓 Public |
 | 2 | `GET` | `/apisite/catalog/v1/search/items` | `?category=&maxRows=&cursor=&keyword=` | 🔓 Public |
 | 3 | `GET` | `/apisite/catalog/v1/recommendations/asset/` | `?contextAssetId=&numItems=` | 🔓 Public |
-| 4 | `GET` | `/apisite/catalog/v1/favorites/users/{id}/assets/{id}/favorite` | Is favorited | 🔐 Session |
+| 4 | `GET` | `/apisite/catalog/v1/favorites/users/{id}/assets/{id}/favorite` | Is favorited? (1st id = user, 2nd = asset) | 🔐 Session |
 | 5 | `POST` | `/apisite/catalog/v1/favorites/users/{id}/assets/{id}/favorite` | Favorite | 🔐 Session |
 | 6 | `DELETE` | `/apisite/catalog/v1/favorites/users/{id}/assets/{id}/favorite` | Unfavorite | 🔐 Session |
 | 7 | `GET` | `/apisite/catalog/v1/assets/{id}/animation-preview` | Animation keyframes for the catalog 3D viewer (pairs with static `/animation-preview/rig.json`) | 🔓 Public |
@@ -301,13 +317,13 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 
 | # | Method | Endpoint | Description | Auth |
 |:-:|---|---|---|:-:|
-| 1 | `GET` | `/apisite/thumbnails/v1/users/avatar?userIds=&size=&format=` | Full-body renders | 🔓 Public |
-| 2 | `GET` | `/apisite/thumbnails/v1/users/avatar-headshot?userIds=&size=&format=` | Headshots | 🔓 Public |
-| 3 | `GET` | `/apisite/thumbnails/v1/users/avatar-3d?userIds=&size=&format=` | 3D JSON renders | 🔓 Public |
-| 4 | `GET` | `/apisite/thumbnails/v1/users/outfits?userOutfitIds=&size=&format=` | Outfit renders | 🔓 Public |
-| 5 | `GET` | `/apisite/thumbnails/v1/groups/icons?groupIds=&format=&size=` | Group icons | 🔓 Public |
-| 6 | `GET` | `/apisite/thumbnails/v1/assets?assetIds=&format=&size=` | Item thumbnails | 🔓 Public |
-| 7 | `GET` | `/apisite/thumbnails/v1/games/icons?universeIds=&size=&format=` | Game icons | 🔓 Public |
+| 1 | `GET` | `/apisite/thumbnails/v1/users/avatar` | Full-body renders — params: `userIds`, `size`, `format` | 🔓 Public |
+| 2 | `GET` | `/apisite/thumbnails/v1/users/avatar-headshot` | Headshots — params: `userIds`, `size`, `format` | 🔓 Public |
+| 3 | `GET` | `/apisite/thumbnails/v1/users/avatar-3d` | 3D JSON renders — params: `userIds`, `size`, `format` | 🔓 Public |
+| 4 | `GET` | `/apisite/thumbnails/v1/users/outfits` | Outfit renders — params: `userOutfitIds`, `size`, `format` | 🔓 Public |
+| 5 | `GET` | `/apisite/thumbnails/v1/groups/icons` | Group icons — params: `groupIds`, `format`, `size` | 🔓 Public |
+| 6 | `GET` | `/apisite/thumbnails/v1/assets` | Item thumbnails — params: `assetIds`, `format`, `size` | 🔓 Public |
+| 7 | `GET` | `/apisite/thumbnails/v1/games/icons` | Game icons — params: `universeIds`, `size`, `format` | 🔓 Public |
 | 8 | `GET` | `/apisite/thumbnails/v1/try-on/{assetId}` | 2D "wear on my avatar" render | 🔐 Session |
 | 9 | `GET` | `/apisite/thumbnails/v1/assets/{assetId}/3d` | 3D item model | 🔐 Session |
 
@@ -324,7 +340,7 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 | 2 | `GET` | `/apisite/games/v1/games/{universeId}` | Universe detail | 🔓 Public |
 | 3 | `GET` | `/apisite/games/v1/games/sorts?gameSortsContext=Home` | Home sorts → `sortToken`s | 🔓 Public |
 | 4 | `GET` | `/apisite/games/v1/games/list` | `?sortToken=&maxRows=&genre=&keyword=&year=` | 🔓 Public |
-| 5 | `GET` | `/apisite/games/v1/games/recommendations/game/{placeId}?maxRows=` | Similar games | 🔓 Public |
+| 5 | `GET` | `/apisite/games/v1/games/recommendations/game/{placeId}` | Similar games — param: `maxRows` | 🔓 Public |
 | 6 | `GET` | `/apisite/games/v1/games/multiget-place-details?placeIds=` | Batch place details | 🔓 Public |
 | 7 | `GET` | `/apisite/games/v1/games/votes?universeIds=` | Like/dislike counts | 🔓 Public |
 | 8 | `PATCH` | `/apisite/games/v1/games/{universeId}/user-votes` | `{vote:true\|false\|null}` | 🔐 Session |
@@ -356,7 +372,7 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 | 16 | `POST` | `/apisite/groups/v1/groups/{id}/claim-ownership` | Claim abandoned group | 🔐 Session |
 | 17 | `PATCH` | `/apisite/groups/v1/groups/{id}/change-owner` | `{userId}` | 🔐 Session |
 | 18 | `PATCH` | `/apisite/groups/v1/groups/{id}/description` | `{description}` | 🔐 Session |
-| 19 | `PATCH` | `/apisite/groups/v1/groups/{id}/settings` | `{isApprovalRequired,areEnemiesAllowed,areGroupFundsVisible,areGroupGamesVisible}` | 🔐 Session |
+| 19 | `PATCH` | `/apisite/groups/v1/groups/{id}/settings` | Flags: `isApprovalRequired`, `areEnemiesAllowed`, `areGroupFundsVisible`, `areGroupGamesVisible` | 🔐 Session |
 | 20 | `PATCH` | `/apisite/groups/v1/groups/{id}/status` | `{message}` | 🔐 Session |
 | 21 | `POST` | `/apisite/groups/v1/groups/{id}/rolesets/create` | `{name,description,rank}` | 🔐 Session |
 | 22 | `PATCH` / `DELETE` | `/apisite/groups/v1/groups/{id}/rolesets/{roleId}` | Edit / delete role | 🔐 Session |
@@ -410,7 +426,7 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 | 3 | `PATCH` | `/apisite/develop/v1/places/{id}/roblox-place-id` | Link real place `{robloxPlaceId}` | 🔐 Session |
 | 4 | `POST` | `/apisite/develop/v1/places/{id}/game-icons/auto-generated` | Auto icon | 🔐 Session |
 | 5 | `GET` | `/apisite/develop/v1/universes/{id}` | Universe info | 🔐 Session |
-| 6 | `GET` / `PATCH` | `/apisite/develop/v1/universes/{id}/access` | `{privacyType,playableDevices,universeAvatarType,emotesEnabled}` | 🔐 Session |
+| 6 | `GET` / `PATCH` | `/apisite/develop/v1/universes/{id}/access` | Fields: `privacyType`, `playableDevices`, `universeAvatarType`, `emotesEnabled` | 🔐 Session |
 | 7 | `PATCH` | `/apisite/develop/v1/universes/{id}/max-player-count` | `{maxPlayers}` | 🔐 Session |
 | 8 | `PATCH` | `/apisite/develop/v1/universes/{id}/set-year` | `{year}` (retro year) | 🔐 Session |
 | 9 | `POST` | `/apisite/develop/v1/universes/{id}/start-place` | `{placeId}` | 🔐 Session |
@@ -420,23 +436,32 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 | 13 | `POST` | `/apisite/develop/v1/universes/{id}/thumbnails/{id}` | Activate thumbnail | 🔐 Session |
 | 14 | `GET` / `POST` | `/apisite/develop/v1/universes/{id}/web-permissions` | Team create `{collaborators,roles}` | 🔐 Session |
 | 15 | `GET` | `/apisite/develop/v1/universes/{id}/web-places` | Place list | 🔐 Session |
-| 16 | `GET` | `/apisite/develop/v1/universes/{id}/developerproducts?pageSize=25` | Developer products | 🔐 Session |
-| 17 | `POST` | `/apisite/develop/v1/universes/{id}/developerproducts?name=&description=&priceInRobux=&iconImageAssetId=` | Create product | 🔐 Session |
+| 16 | `GET` | `/apisite/develop/v1/universes/{id}/developerproducts` | Developer products — param: `pageSize=25` | 🔐 Session |
+| 17 | `POST` | `/apisite/develop/v1/universes/{id}/developerproducts` | Create product — query params: `name`, `description`, `priceInRobux`, `iconImageAssetId` | 🔐 Session |
 | 18 | `POST` | `/apisite/develop/v1/universes/{id}/developerproducts/{id}/update` | `{Name,Description,IconImageAssetId,PriceInRobux}` | 🔐 Session |
 | 19 | `GET` | `/apisite/develop/v1/assets/{id}/published-versions` | `?limit=&sortOrder=Desc&cursor=` | 🔐 Session |
-| 20 | `POST` | `/apisite/develop/v1/assets/{id}/revert-version?assetVersionNumber=` | Roll back | 🔐 Session |
-| 21 | `PATCH` | `/apisite/develop/v1/assets/{id}` | `{name,description,genres,isCopyingAllowed,enableComments,isForSale}` | 🔐 Session |
+| 20 | `POST` | `/apisite/develop/v1/assets/{id}/revert-version` | Roll back — param: `assetVersionNumber` | 🔐 Session |
+| 21 | `PATCH` | `/apisite/develop/v1/assets/{id}` | Fields: `name`, `description`, `genres`, `isCopyingAllowed`, `enableComments`, `isForSale` | 🔐 Session |
 | 22 | `POST` | `/apisite/develop/v1/assets/upload-gameicon?placeId=` | Multipart icon upload | 🔐 Session |
 | 23 | `POST` | `/apisite/develop/v1/assets/upload-thumbnail?universeId=` | Multipart thumbnail upload | 🔐 Session |
 | 24 | `GET` | `/apisite/develop/v1/assets/genres` | Genre list | 🔓 Public |
-| 25 | `GET` | `/apisite/develop/v1/places/{id}/download` | Place-file download (used as a link, not an axios call) | 🔐 Session |
+| 25 | `GET` | `/apisite/develop/v1/places/{id}/download` | **"Download Place"** — serves the raw place file. The UI anchors it as `download="{gameName}.rbxl"` right next to "Edit in Studio" in the game's manage menu | 🔐 Session |
+
+> [!TIP]
+> **Three ways the site "gets" a game file:**
+> • **`/develop/v1/places/{id}/download`** — direct `.rbxl` download (manage menu, login required)
+> • **`GET /game/get-studio-link?placeId=`** — hands the place to Fluxer Studio instead of the browser
+> • **`GET`/`PATCH /develop/v1/places/{id}/place-copy`** — the `{enabled}` toggle that decides whether *other* people may copy the place
+>
+> Unauthenticated requests answer `401`, and the button only renders in owner/manage
+> context — expect server-side permission checks for places you don't control.
 
 ### itemconfiguration
 
 | # | Method | Endpoint | Description | Auth |
 |:-:|---|---|---|:-:|
 | 1 | `GET` | `/apisite/itemconfiguration/v1/assets/restrictions?assetIds=` | Moderation restrictions | 🔓 Public |
-| 2 | `GET` | `/apisite/itemconfiguration/v1/creations/get-assets?assetType=&limit=&cursor=&groupId=` | Own creations | 🔐 Session |
+| 2 | `GET` | `/apisite/itemconfiguration/v1/creations/get-assets` | Own creations — params: `assetType`, `limit`, `cursor`, `groupId` | 🔐 Session |
 | 3 | `POST` | `/apisite/itemconfiguration/v1/creations/get-asset-details` | `{assetIds:[...]}` | 🔐 Session |
 | 4 | `POST` | `/apisite/itemconfiguration/v1/assets/{id}/update-price` | `{priceInRobux}` | 🔐 Session |
 
@@ -449,7 +474,7 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 | 3 | `GET` | `/apisite/economy/v1/assets/{id}/resale-data` | Limited resale stats | 🔓 Public |
 | 4 | `GET` | `/apisite/economy/v1/assets/{id}/users/{id}/resellable-copies` | Own copies | 🔐 Session |
 | 5 | `PATCH` | `/apisite/economy/v1/assets/{id}/resellable-copies/{uaid}` | Reprice `{price}` | 🔐 Session |
-| 6 | `POST` | `/apisite/economy/v1/purchases/products/{productId}` | Buy `{assetId,expectedPrice,expectedSellerId,userAssetId,expectedCurrency}` | 🔐 Session |
+| 6 | `POST` | `/apisite/economy/v1/purchases/products/{productId}` | Buy — body: `assetId`, `expectedPrice`, `expectedSellerId`, `userAssetId`, `expectedCurrency` | 🔐 Session |
 | 7 | `GET` | `/apisite/economy/v2/users/{id}/transactions` | `?cursor=&transactionType=` | 🔐 Session |
 | 8 | `GET` | `/apisite/economy/v2/users/{id}/transaction-totals` | `?timeFrame=&transactionType=summary` | 🔐 Session |
 | 9 | `GET` | `/apisite/economy/v2/groups/{id}/transactions` | Group transactions | 🔐 Session |
@@ -519,7 +544,7 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 | 1 | `GET` | `/apisite/privatemessages/v1/messages` | `?messageTab=&pageSize=&pageNumber=` (tabs: inbox/sent/archive) | 🔐 Session |
 | 2 | `GET` | `/apisite/privatemessages/v1/messages/unread/count` | Unread badge | 🔐 Session |
 | 3 | `GET` | `/apisite/privatemessages/v1/announcements` | System announcements | 🔓 Public |
-| 4 | `POST` | `/apisite/privatemessages/v1/messages/send` | `{recipientid,body,subject,replyMessageId,includePreviousMessage}` | 🔐 Session |
+| 4 | `POST` | `/apisite/privatemessages/v1/messages/send` | Body: `recipientid`, `body`, `subject`, `replyMessageId`, `includePreviousMessage` | 🔐 Session |
 | 5 | `POST` | `/apisite/privatemessages/v1/messages/{archive\|unarchive}` | `{messageIds:[...]}` | 🔐 Session |
 | 6 | `POST` | `/apisite/privatemessages/v1/messages/{mark-read\|mark-unread}` | `{messageIds:[...]}` | 🔐 Session |
 
@@ -540,7 +565,7 @@ All return `{"data":[…]}`; sizes like `150x150`, `420x420`; `format=png`.
 | # | Method | Endpoint | Description | Auth |
 |:-:|---|---|---|:-:|
 | 1 | `GET` | `/apisite/ads/v1/user-ads/{User\|Group}/{creatorId}` | List ads of creator | 🔓 Public |
-| 2 | `POST` | `/apisite/ads/v1/user-ads/{User\|Group}/create?assetId={targetId}` | Multipart `name`, `files` | 🔐 Session |
+| 2 | `POST` | `/apisite/ads/v1/user-ads/{User\|Group}/create` | Multipart `name`, `files` — query: `assetId` = promoted item | 🔐 Session |
 | 3 | `POST` | `/apisite/ads/v1/user-ads/{adId}/run` | Run campaign `{robux}` | 🔐 Session |
 
 ### billing
@@ -642,10 +667,10 @@ directly — no `/apisite` prefix.
 | 9 | `GET` | `/universes/get-universe-places?universeId=` | Places in a universe | 🔐 Session |
 | 10 | `GET` | `/v1/gametemplates` | Create-place templates | 🔐 Session |
 | 11 | `GET` | `/search/users/results?keyword=&maxRows=&startIndex=` | User search | 🔓 Public |
-| 12 | `GET` | `/users/inventory/list-json?userId=&assetTypeId=&cursor=&itemsPerPage=` | Legacy inventory | 🔓 Public |
-| 13 | `GET` | `/users/favorites/list-json?userId=&assetTypeId=&cursor=&itemsPerPage=` | Legacy favorites | 🔓 Public |
+| 12 | `GET` | `/users/inventory/list-json` | Legacy inventory — params: `userId`, `assetTypeId`, `cursor`, `itemsPerPage` | 🔓 Public |
+| 13 | `GET` | `/users/favorites/list-json` | Legacy favorites — params: `userId`, `assetTypeId`, `cursor`, `itemsPerPage` | 🔓 Public |
 | 14 | `GET` | `/users/profile/robloxcollections-json?userId=` | Profile collection | 🔓 Public |
-| 15 | `GET` | `/comments/get-json?assetId=&startIndex=&thumbnailWidth=100&thumbnailHeight=100&thumbnailFormat=PNG&cachebuster=` | Item comments | 🔓 Public |
+| 15 | `GET` | `/comments/get-json` | Item comments — params: `assetId`, `startIndex`; thumbs fixed at 100×100 PNG; `cachebuster` busts cache | 🔓 Public |
 | 16 | `POST` | `/comments/post` | `{text,assetId}` — rate/captcha limited | 🔐 Session |
 | 17 | `POST` | `/asset/toggle-profile` | Pin to profile `{assetId,addToProfile}` | 🔐 Session |
 | 18 | `GET` | `/asset/status?assetId=` | Asset moderation status | 🔐 Session |
